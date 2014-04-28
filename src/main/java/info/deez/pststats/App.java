@@ -1,7 +1,19 @@
 package info.deez.pststats;
 
-import java.util.*;
-import com.pff.*;
+import java.io.File;
+import java.io.FilenameFilter;
+import java.io.PrintStream;
+import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.List;
+import com.google.common.base.Preconditions;
+import com.pff.PSTFile;
+import com.pff.PSTFolder;
+import org.apache.commons.cli.BasicParser;
+import org.apache.commons.cli.CommandLine;
+import org.apache.commons.cli.CommandLineParser;
+import org.apache.commons.cli.HelpFormatter;
+import org.apache.commons.cli.Options;
 
 public class App 
 {
@@ -12,96 +24,79 @@ public class App
             app.run(args);
         } catch (Exception e) {
             e.printStackTrace();
+            System.exit(1);
         }
+    }
+
+    private Options options;
+
+    public App() {
+        this.options = new Options();
+        options.addOption("d", "directory", true, "process PST files in specified directory");
+        options.addOption("f", "file", true, "process specified PST file");
+        options.addOption("h", "help", false, "print help and exit");
+        options.addOption("o", "output", true, "write output to specified file");
     }
 
     public void run(String[] args) throws Exception
     {
-        ArrayList<String> pstFiles = new ArrayList<String>();
-        pstFiles.add("D:\\Steve\\Outlook\\2003.pst");
-        pstFiles.add("D:\\Steve\\Outlook\\2004.pst");
-        pstFiles.add("D:\\Steve\\Outlook\\2005.pst");
-        pstFiles.add("D:\\Steve\\Outlook\\2006.pst");
-        pstFiles.add("D:\\Steve\\Outlook\\2007.pst");
-        pstFiles.add("D:\\Steve\\Outlook\\2008.pst");
-        pstFiles.add("D:\\Steve\\Outlook\\2009.pst");
-        pstFiles.add("D:\\Steve\\Outlook\\2010.pst");
-        pstFiles.add("D:\\Steve\\Outlook\\2011.pst");
-        pstFiles.add("D:\\Steve\\Outlook\\2012.pst");
-        pstFiles.add("D:\\Steve\\Outlook\\2013.pst");
-        
-        System.out.println("File,Num Recv Emails,Num Sent Emails");
-        for (String pstFile : pstFiles) {
-            processFile(pstFile);
+        CommandLineParser parser = new BasicParser();
+        CommandLine cmd = parser.parse(options, args);
+
+        if (cmd.hasOption("h")) {
+            printHelp();
+            System.exit(0);
+        }
+
+        List<File> pstFiles = new ArrayList<File>();
+        if (cmd.hasOption("d")) {
+            File dir = new File(cmd.getOptionValue("d"));
+            File[] files = dir.listFiles(new FilenameFilter() {
+                public boolean accept(File dir, String name) {
+                    return name.toLowerCase().endsWith(".pst");
+                }
+            });
+            pstFiles.addAll(Arrays.asList(files));
+        }
+        if (cmd.hasOption("f")) {
+            pstFiles.add(new File(cmd.getOptionValue("f")));
+        }
+
+        if (pstFiles.isEmpty()) {
+            System.err.println("Error: One of -d or -f must be specified");
+            printHelp();
+            System.exit(1);
+        }
+
+        PrintStream os = System.out;
+        if (cmd.hasOption("o")) {
+            os = new PrintStream(cmd.getOptionValue("o"));
+        }
+
+        os.println("File,Num Recv Emails,Num Sent Emails");
+        for (File pstFile : pstFiles) {
+            processFile(pstFile, os);
         }
     }
-    
-    private void processFile(String pstFileName) throws Exception {
-        String recvMailFolderPath = "/Top of Personal Folders/Received Email";        
-        String sentMailFolderPath = "/Top of Personal Folders/Sent Items";        
 
-        //System.out.println("Processing file " + pstFileName);
-        PSTFile pstFile = new PSTFile(pstFileName);
-        
-        /*for (String folderName : enumAllFolderNames(pstFile)) {
-            System.out.println(folderName);
-        }*/
-        
-        PSTFolder recvMailFolder = getFolderByPath(pstFile, recvMailFolderPath);
+    private void printHelp() {
+        HelpFormatter formatter = new HelpFormatter();
+        formatter.printHelp("pststats", options);
+    }
+    
+    private void processFile(File file, PrintStream os) throws Exception {
+        Preconditions.checkNotNull(file);
+
+        PSTFile pstFile = new PSTFile(file);
+        PSTFolder recvMailFolder = PSTFileUtils.findFolderByName(pstFile, "Received Email");
         if (recvMailFolder == null) {
-            throw new RuntimeException("Could not find folder \"" + recvMailFolderPath + "\" in PST file \"" + pstFileName + "\"");
+            throw new RuntimeException("Could not find Received Email folder in PST file \"" + file + "\"");
         }
-        PSTFolder sentMailFolder = getFolderByPath(pstFile, sentMailFolderPath);
+        PSTFolder sentMailFolder = PSTFileUtils.findFolderByName(pstFile, "Sent Items");
         if (sentMailFolder == null) {
-            throw new RuntimeException("Could not find folder \"" + sentMailFolderPath + "\" in PST file \"" + pstFileName + "\"");
+            throw new RuntimeException("Could not find Sent Items folder in PST file \"" + file + "\"");
         }
         
-        System.out.println(pstFileName + "," + recvMailFolder.getContentCount() + "," + sentMailFolder.getContentCount());
-    }
-    
-    private ArrayList<String> enumAllFolderNames(PSTFile pstFile) throws Exception {
-        return enumAllFolderNames("/", pstFile.getRootFolder());
-    }
-
-    private ArrayList<String> enumAllFolderNames(String baseName, PSTFolder folder) throws Exception {
-        ArrayList<String> folderNames = new ArrayList<String>();
-
-        for (PSTFolder childFolder : folder.getSubFolders()) {
-            for (String folderName : enumAllFolderNames(baseName + childFolder.getDisplayName() + "/", childFolder)) {
-                folderNames.add(folderName);
-            }
-            folderNames.add(baseName + childFolder.getDisplayName());
-        }
-        
-        return folderNames;
-    }
-
-    private PSTFolder getFolderByPath(PSTFile pstFile, String folderName) throws Exception
-    {
-        if (folderName.startsWith("/")) {
-            return getFolderByPath(pstFile.getRootFolder(), folderName.substring(1));
-        } else {
-            return null;
-        }        
-    }
-    
-    private PSTFolder getFolderByPath(PSTFolder folder, String folderName) throws Exception {
-        int indx = folderName.indexOf('/');
-        if (indx == -1) {
-            return getChildFolderByDisplayName(folder, folderName);
-        } else {
-            String childName = folderName.substring(0, indx);
-            PSTFolder child = getChildFolderByDisplayName(folder, childName);
-            return getFolderByPath(child, folderName.substring(indx + 1));
-        }        
-    }
-    
-    private PSTFolder getChildFolderByDisplayName(PSTFolder folder, String folderName) throws Exception {
-        Vector<PSTFolder> childFolders = folder.getSubFolders();
-        for (PSTFolder childFolder : childFolders) {
-            if (childFolder.getDisplayName().equals(folderName))
-                return childFolder;
-        }
-        return null;
+        os.println(file + "," + recvMailFolder.getContentCount() + "," + sentMailFolder.getContentCount());
     }
 }
